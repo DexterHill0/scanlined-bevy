@@ -1,9 +1,12 @@
 mod indexable;
+mod inspector;
 
+use core::f64;
 use std::{
     cmp::{max, min},
     hash::Hash,
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, Deref, Div, Mul, Sub},
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
@@ -25,24 +28,29 @@ use bevy::{
     window::{PresentMode, WindowResized, WindowTheme},
 };
 
+use bevy_egui::EguiPlugin;
 #[cfg(debug_assertions)]
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
+use bevy_inspector_egui::DefaultInspectorConfigPlugin;
 use bevy_mod_index::{
     index::{Index, IndexInfo},
     prelude::IndexRefreshPolicy,
     storage::HashmapStorage,
 };
+use inspector::inspector_system;
 use rand::Rng;
 
 const SHADER_ASSET_PATH: &str = "shaders/shader.wgsl";
 
 const SCANLINE_X: i32 = 17;
 const SCANLINE_Y: i32 = 11;
-const STARTING_USER_PIXEL: (i32, i32) = (SCANLINE_X / 2, SCANLINE_Y / 2);
+pub const PACKED_SIZE: i32 = PixelPosition::pack(SCANLINE_X, SCANLINE_Y);
+const STARTING_USER_PIXEL: PixelPosition = PixelPosition::new(SCANLINE_X / 2, SCANLINE_Y / 2);
 const USER_PIXEL_OUTLINE_THICKNESS: f32 = 2.0;
 const PIXEL_GAP: f32 = 5.0;
 const PIXEL_SIZE: f32 = 56.0;
+pub const PIXEL_WAIT_TIME: f64 = 50.0;
 
 const ATTRIBUTE_PIXEL_SCALE: MeshVertexAttribute =
     MeshVertexAttribute::new("PixelSize", 94583659670978, VertexFormat::Float32x2);
@@ -112,7 +120,7 @@ pub struct PixelPosition {
 }
 
 impl PixelPosition {
-    fn new(x: i32, y: i32) -> Self {
+    const fn new(x: i32, y: i32) -> Self {
         Self {
             pos: IVec2::new(x, y),
             packed: Self::pack(x, y),
@@ -126,7 +134,7 @@ impl PixelPosition {
         Self::new(x, y)
     }
 
-    fn pack(x: i32, y: i32) -> i32 {
+    const fn pack(x: i32, y: i32) -> i32 {
         (y * SCANLINE_X) + x
     }
 
@@ -137,6 +145,10 @@ impl PixelPosition {
     fn replace(&mut self, new_x: i32, new_y: i32) {
         self.pos = IVec2::new(new_x, new_y);
         self.packed = Self::pack(new_x, new_y);
+    }
+
+    fn normalised(&self) -> f64 {
+        self.packed as f64 / PACKED_SIZE as f64
     }
 }
 
@@ -249,8 +261,7 @@ impl PartialOrd<NearestUserPixel> for PixelPosition {
 pub struct PixelStates {
     pub next_lit_pixel: PixelPosition,
     pub next_lit_time: f64,
-
-    pub nearest_user_pixel: NearestUserPixel,
+    // pub nearest_user_pixel: NearestUserPixel,
 }
 
 impl PixelStates {
@@ -301,6 +312,27 @@ impl PixelMarker {
     }
 }
 
+type BellEasingFn = dyn Fn(f64) -> f64 + Send + Sync;
+
+#[derive(Resource)]
+pub struct CombinedEasing(Box<BellEasingFn>);
+
+impl Default for CombinedEasing {
+    fn default() -> Self {
+        Self(Box::new(|x: f64| {
+            bell_curve(x, STARTING_USER_PIXEL.normalised(), 0.2, 1.0)
+        }))
+    }
+}
+
+impl Deref for CombinedEasing {
+    type Target = BellEasingFn;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Component)]
 #[require(Pixel, PixelLifetime, MeshMaterial2d<PixelMaterial>, PixelMarker)]
 pub struct GridPixel;
@@ -340,7 +372,8 @@ fn setup_grid(
 
             // grid.insert_pixel(marker.pos, pixel_entity.id());
 
-            if (x, y) == STARTING_USER_PIXEL {
+            // TODO: make index
+            if STARTING_USER_PIXEL.pos == (x, y).into() {
                 material.outline_thickness = USER_PIXEL_OUTLINE_THICKNESS;
 
                 pixel_entity.insert(UserPixelMarker {
@@ -367,25 +400,63 @@ where
     ((number - in_min) / (in_max - in_min)) * ((out_max - out_min) + out_min)
 }
 
-fn bell_curve_easing(current_pixel: PixelPosition, nearest_user_pixel: PixelPosition) -> f64 {
-    let t = 50.0
-        * ((-((current_pixel.packed - nearest_user_pixel.packed) as f64 / 18.0).powf(2.0)) / 2.0)
-            .exp();
-    t
-    // scale(t, 1.1, 50.0, 0.005, 0.12)
+// fn bell_curve_easing(current_pixel: PixelPosition, nearest_user_pixel: PixelPosition) -> f64 {
+//     let t = 50.0
+//         * ((-((current_pixel.packed - nearest_user_pixel.packed) as f64 / 18.0).powf(2.0)) / 2.0)
+//             .exp();
+//     t
+//     // scale(t, 1.1, 50.0, 0.005, 0.12)
+// }
+
+#[inline]
+pub fn bell_curve(x: f64, center: f64, width: f64, sharpness: f64) -> f64 {
+    (-((x - center).abs() / width).powf(sharpness)).exp()
 }
 
-fn user_pixel_added(
+// fn user_pixel_added(
+//     mut materials: ResMut<Assets<PixelMaterial>>,
+//     query: Query<(&UserPixelMarker, &MeshMaterial2d<PixelMaterial>), Added<UserPixelMarker>>,
+// ) {
+//     // dbg!(query.iter().size_hint());
+//     if let Ok((_, mat_handle)) = query.get_single() {
+//         materials
+//             .get_mut(&mat_handle.0)
+//             .expect("missing pixel material")
+//             .outline_thickness = USER_PIXEL_OUTLINE_THICKNESS;
+//     }
+
+//     // for (marker) in &query2 {
+//     //     dbg!("HI", marker);
+//     // }
+// }
+
+fn user_pixel_added_observer(
+    trigger: Trigger<OnAdd, UserPixelMarker>,
+    query: Query<(&UserPixelMarker, &MeshMaterial2d<PixelMaterial>)>,
     mut materials: ResMut<Assets<PixelMaterial>>,
-    query: Query<(&UserPixelMarker, &MeshMaterial2d<PixelMaterial>), Changed<UserPixelMarker>>,
+    mut easing_res: ResMut<CombinedEasing>,
 ) {
-    // TODO: make Single<>?
-    if let Ok((_, mat_handle)) = query.get_single() {
-        materials
-            .get_mut(&mat_handle.0)
-            .expect("missing pixel material")
-            .outline_thickness = USER_PIXEL_OUTLINE_THICKNESS;
+    if let Ok((_, mat_handle)) = query.get(trigger.entity()) {
+        if let Some(mat) = materials.get_mut(&mat_handle.0) {
+            mat.outline_thickness = USER_PIXEL_OUTLINE_THICKNESS;
+        }
+        // materials
+        //     .get_mut(&mat_handle.0)
+        //     .expect("missing pixel material")
+        //     .outline_thickness = USER_PIXEL_OUTLINE_THICKNESS;
     }
+
+    let mut max_ease: Box<BellEasingFn> = CombinedEasing::default().0;
+
+    for (marker, ..) in &query {
+        // done to keep the inner closure 'static
+        let pixel_bell_curve_gen = |center: f64| move |x: f64| bell_curve(x, center, 0.2, 1.0);
+        let pixel_bell_curve = pixel_bell_curve_gen(marker.pos.normalised());
+
+        max_ease = Box::new(move |x| max_ease(x).max(pixel_bell_curve(x)));
+    }
+
+    easing_res.0 = max_ease;
 }
 
 fn keyboard_input(
@@ -402,39 +473,39 @@ fn keyboard_input(
                 .entity(entity)
                 .insert(UserPixelMarker { pos: new_pos });
 
-            // if we pick a pixel that is nearer to 0,0 than the existing user pixel, and it is
-            // not already behind the lit pixel, we update it
-            if new_pos < game_state.nearest_user_pixel && game_state.next_lit_pixel < new_pos {
-                game_state.nearest_user_pixel = NearestUserPixel::Ahead(new_pos);
-            }
+            // // if we pick a pixel that is nearer to 0,0 than the existing user pixel, and it is
+            // // not already behind the lit pixel, we update it
+            // if new_pos < game_state.nearest_user_pixel && game_state.next_lit_pixel < new_pos {
+            //     game_state.nearest_user_pixel = NearestUserPixel::Ahead(new_pos);
+            // }
         }
     }
 }
 
-fn update_nearest_user_pixel(
-    query: Query<&PixelMarker, With<UserPixelMarker>>,
-    mut game_state: ResMut<PixelStates>,
-) {
-    // TODO: make `run_if`
-    let has_passed_user_pixel = game_state.next_lit_pixel >= game_state.nearest_user_pixel;
-    if has_passed_user_pixel && !matches!(game_state.nearest_user_pixel, NearestUserPixel::Wrap(..))
-    {
-        game_state.nearest_user_pixel = query
-            .iter()
-            .sort::<&PixelMarker>()
-            .find(|marker| marker.pos > game_state.next_lit_pixel)
-            .map_or_else(
-                || NearestUserPixel::Wrap(query.iter().sort::<&PixelMarker>().next().unwrap().pos),
-                |pos| NearestUserPixel::Ahead(pos.pos),
-            );
-    } else if !has_passed_user_pixel
-        && matches!(game_state.nearest_user_pixel, NearestUserPixel::Wrap(..))
-    {
-        // if we have wrapped back around to the beginning, make it `Ahead` again
-        game_state.nearest_user_pixel =
-            NearestUserPixel::Ahead(*game_state.nearest_user_pixel.pos())
-    }
-}
+// fn update_nearest_user_pixel(
+//     query: Query<&PixelMarker, With<UserPixelMarker>>,
+//     mut game_state: ResMut<PixelStates>,
+// ) {
+//     // TODO: make `run_if`
+//     let has_passed_user_pixel = game_state.next_lit_pixel >= game_state.nearest_user_pixel;
+//     if has_passed_user_pixel && !matches!(game_state.nearest_user_pixel, NearestUserPixel::Wrap(..))
+//     {
+//         game_state.nearest_user_pixel = query
+//             .iter()
+//             .sort::<&PixelMarker>()
+//             .find(|marker| marker.pos > game_state.next_lit_pixel)
+//             .map_or_else(
+//                 || NearestUserPixel::Wrap(query.iter().sort::<&PixelMarker>().next().unwrap().pos),
+//                 |pos| NearestUserPixel::Ahead(pos.pos),
+//             );
+//     } else if !has_passed_user_pixel
+//         && matches!(game_state.nearest_user_pixel, NearestUserPixel::Wrap(..))
+//     {
+//         // if we have wrapped back around to the beginning, make it `Ahead` again
+//         game_state.nearest_user_pixel =
+//             NearestUserPixel::Ahead(*game_state.nearest_user_pixel.pos())
+//     }
+// }
 
 fn update_pixel_brightness(
     time: Res<Time>,
@@ -444,54 +515,52 @@ fn update_pixel_brightness(
     let millis_elapsed = time.elapsed().as_millis() as f64;
 
     for (_, lifetime, mat_handle) in &query {
-        let brightness = (millis_elapsed - lifetime.0).clamp(0.0, 1.0);
-        // 1.0
-        //     - ((millis_elapsed - lifetime.0) / 6.0)
-        //         .clamp(0.0, 1.0)
-        //         .powf(2.0);
+        let brightness = lifetime.0; //(millis_elapsed - lifetime.0).clamp(0.0, 1.0);
+                                     // 1.0
+                                     //     - ((millis_elapsed - lifetime.0) / 6.0)
+                                     //         .clamp(0.0, 1.0)
+                                     //         .powf(2.0);
 
-        materials
-            .get_mut(&mat_handle.0)
-            .expect("missing pixel material")
-            .brightness = brightness as f32;
+        if let Some(mat) = materials.get_mut(&mat_handle.0) {
+            mat.brightness = brightness as f32;
+        }
+
+        // materials
+        //     .get_mut(&mat_handle.0)
+        //     .expect("missing pixel material")
     }
-}
-
-#[inline]
-pub(crate) fn exponential_in(t: f64) -> f64 {
-    f64::powf(2.0, 10.0 * t - 10.0)
-}
-#[inline]
-pub(crate) fn exponential_out(t: f64) -> f64 {
-    1.0 - f64::powf(2.0, -10.0 * t)
 }
 
 fn update_pixel_lit_time(
     time: Res<Time>,
-    mut game_state: ResMut<PixelStates>,
+    mut state: ResMut<PixelStates>,
     mut query: Query<(&PixelMarker, &mut PixelLifetime)>,
+    combined_easing: Res<CombinedEasing>,
 ) {
     let millis_elapsed = time.elapsed().as_millis() as f64;
 
     // TODO: make `run_if`
-    if millis_elapsed > game_state.next_lit_time {
+    if millis_elapsed > state.next_lit_time {
         for (pixel, mut lifetime) in &mut query {
-            if pixel.pos == game_state.next_lit_pixel {
-                lifetime.0 = millis_elapsed;
+            if pixel.pos == state.next_lit_pixel {
+                lifetime.0 = 1.0;
             } else {
                 // lifetime.0 = 0.0;
                 lifetime.0 = 0.0; //exponential_in(millis_elapsed - lifetime.0);
             }
         }
 
-        game_state.update_next_pixel();
+        state.update_next_pixel();
 
-        let eased_wait_time = bell_curve_easing(
-            game_state.next_lit_pixel,
-            *game_state.nearest_user_pixel.pos(),
-        );
+        // let eased_wait_time = bell_curve_easing(
+        //     state.next_lit_pixel,
+        //     *state.nearest_user_pixel.pos(),
+        // );
 
-        game_state.next_lit_time = millis_elapsed + eased_wait_time;
+        // let x = PixelPosition::pack(SCANLINE_X, SCANLINE_Y) - state.next_lit_pixel.packed;
+        // let x = combined_easing(state.next_lit_pixel.packed as f64);
+        state.next_lit_time =
+            millis_elapsed + (PIXEL_WAIT_TIME * combined_easing(state.next_lit_pixel.normalised()));
     }
 }
 
@@ -531,7 +600,7 @@ fn setup(
     commands.insert_resource(PixelStates {
         next_lit_pixel: PixelPosition::new(0, 0),
         next_lit_time: 0.0, // next_lit_time: Duration::new(0, 0),
-        nearest_user_pixel: NearestUserPixel::Ahead(STARTING_USER_PIXEL.into()),
+                            // nearest_user_pixel: NearestUserPixel::Ahead(STARTING_USER_PIXEL.into()),
     });
 
     setup_grid(commands, window, meshes, materials);
@@ -561,28 +630,33 @@ fn main() {
                 })
                 .set(ImagePlugin::default_nearest()),
             Material2dPlugin::<PixelMaterial>::default(),
-            #[cfg(debug_assertions)]
-            {
-                WorldInspectorPlugin::new()
-            },
+            // #[cfg(debug_assertions)]
+            // {
+            //     WorldInspectorPlugin::new()
+            // },
+            EguiPlugin,
+            DefaultInspectorConfigPlugin,
         ))
         .add_systems(Startup, (setup,))
-        .add_systems(PreUpdate, (update_nearest_user_pixel,))
+        // .add_systems(PreUpdate, (update_nearest_user_pixel,))
         .add_systems(
             Update,
             (
-                user_pixel_added,
+                // user_pixel_added,
                 update_pixel_lit_time,
                 update_pixel_brightness,
                 keyboard_input,
             ),
         )
+        .add_systems(Update, inspector_system())
+        .add_observer(user_pixel_added_observer)
         .add_systems(PostUpdate, (position_grid_pixels,))
         .insert_resource(ClearColor(Color::srgb(0.0, 0.0, 0.0)))
+        .insert_resource(CombinedEasing::default())
         .register_type::<HashmapStorage<PixelMarker>>()
         // .register_type::<PixelMarker>()
         // .register_type::<PixelPosition>()
         // .register_type::<NearestUserPixel>()
-        .register_type::<PixelStates>()
+        // .register_type::<PixelStates>()
         .run();
 }
