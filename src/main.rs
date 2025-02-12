@@ -152,6 +152,14 @@ impl PixelPosition {
     }
 }
 
+impl Deref for PixelPosition {
+    type Target = i32;
+
+    fn deref(&self) -> &Self::Target {
+        &self.packed
+    }
+}
+
 impl From<IVec2> for PixelPosition {
     fn from(value: IVec2) -> Self {
         Self {
@@ -507,6 +515,20 @@ fn keyboard_input(
 //     }
 // }
 
+// fn ease_out_quad(x: f64) -> f64 {
+//     1.0 - (1.0 - x) * (1.0 - x) // Quadratic easing out
+// }
+// fn ease_out_circ(x: f64) -> f64 {
+//     (1.0 - (x - 1.0).powi(2)).sqrt()
+// }
+// fn ease_out_exponential(x: f64) -> f64 {
+//     if x == 1.0 {
+//         1.0
+//     } else {
+//         1.0 - 2.0f64.powf(-10.0 * x) // Strong falloff with a longer tail
+//     }
+// }
+
 fn update_pixel_brightness(
     time: Res<Time>,
     mut materials: ResMut<Assets<PixelMaterial>>,
@@ -515,19 +537,12 @@ fn update_pixel_brightness(
     let millis_elapsed = time.elapsed().as_millis() as f64;
 
     for (_, lifetime, mat_handle) in &query {
-        let brightness = lifetime.0; //(millis_elapsed - lifetime.0).clamp(0.0, 1.0);
-                                     // 1.0
-                                     //     - ((millis_elapsed - lifetime.0) / 6.0)
-                                     //         .clamp(0.0, 1.0)
-                                     //         .powf(2.0);
+        let brightness =
+            (1.0 - ((millis_elapsed - lifetime.0) / 1000.0 / 6.0).clamp(0.0, 1.0)).powf(3.0);
 
         if let Some(mat) = materials.get_mut(&mat_handle.0) {
             mat.brightness = brightness as f32;
         }
-
-        // materials
-        //     .get_mut(&mat_handle.0)
-        //     .expect("missing pixel material")
     }
 }
 
@@ -536,21 +551,47 @@ fn update_pixel_lit_time(
     mut state: ResMut<PixelStates>,
     mut query: Query<(&PixelMarker, &mut PixelLifetime)>,
     combined_easing: Res<CombinedEasing>,
+    mut index: Index<PixelMarker>,
 ) {
     let millis_elapsed = time.elapsed().as_millis() as f64;
 
+    // let trail_length = 30;
+
     // TODO: make `run_if`
     if millis_elapsed > state.next_lit_time {
-        for (pixel, mut lifetime) in &mut query {
-            if pixel.pos == state.next_lit_pixel {
-                lifetime.0 = 1.0;
-            } else {
-                // lifetime.0 = 0.0;
-                lifetime.0 = 0.0; //exponential_in(millis_elapsed - lifetime.0);
-            }
-        }
+        // these should always exist
+        let pixel_entity = index
+            .lookup_single(&state.next_lit_pixel)
+            .expect("no entity for next_lit_pixel");
+
+        let (_, mut lit_pixel_lifetime) = query
+            .get_mut(pixel_entity)
+            .expect("no component for next_lit_pixel entity");
+
+        lit_pixel_lifetime.0 = millis_elapsed;
 
         state.update_next_pixel();
+
+        state.next_lit_time =
+            millis_elapsed + (PIXEL_WAIT_TIME * combined_easing(state.next_lit_pixel.normalised()));
+
+        // for (pixel, mut lifetime) in &mut query {
+        //     let distance = pixel.pos.abs_diff(state.next_lit_pixel.packed);
+
+        //     if distance < trail_length {
+        //         let fade_factor = distance as f64 / trail_length as f64;
+        //         lifetime.0 = ease_out_exponential(1.0 - fade_factor); // Apply easing
+        //     } else {
+        //         lifetime.0 = 0.0; // Pixels beyond the trail are dark
+        //     }
+
+        //     // if pixel.pos == state.next_lit_pixel {
+        //     //     lifetime.0 = 1.0;
+        //     // } else {
+        //     //     // lifetime.0 = 0.0;
+        //     //     lifetime.0 = 0.0; //exponential_in(millis_elapsed - lifetime.0);
+        //     // }
+        // }
 
         // let eased_wait_time = bell_curve_easing(
         //     state.next_lit_pixel,
@@ -559,8 +600,6 @@ fn update_pixel_lit_time(
 
         // let x = PixelPosition::pack(SCANLINE_X, SCANLINE_Y) - state.next_lit_pixel.packed;
         // let x = combined_easing(state.next_lit_pixel.packed as f64);
-        state.next_lit_time =
-            millis_elapsed + (PIXEL_WAIT_TIME * combined_easing(state.next_lit_pixel.normalised()));
     }
 }
 
