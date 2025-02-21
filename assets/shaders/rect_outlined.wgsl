@@ -4,25 +4,25 @@ struct VertexInput {
     @builtin(instance_index) instance_index: u32,
     @location(0) position: vec3<f32>,
     @location(1) uv: vec2<f32>,
-    @location(2) pixel_size: vec2<f32>,
+    @location(2) rect_size: vec2<f32>,
 };
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) uv: vec2<f32>,
-    @location(1) pixel_size: vec2<f32>,
+    @location(1) rect_size: vec2<f32>,
 };
 
-@group(2) @binding(0) var<uniform> pixel_color: vec4<f32>;
-@group(2) @binding(1) var<uniform> pixel_brightness: f32;
+@group(2) @binding(0) var<uniform> rect_color: vec4<f32>;
+@group(2) @binding(0) var<uniform> outline_color: vec4<f32>;
 @group(2) @binding(2) var<uniform> outline_thickness: f32;
 
 @vertex
 fn vertex(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
 
-    let normalised_scale_x = outline_thickness / input.pixel_size.x;
-    let normalised_scale_y = outline_thickness / input.pixel_size.y;
+    let normalised_scale_x = outline_thickness / input.rect_size.x;
+    let normalised_scale_y = outline_thickness / input.rect_size.y;
 
     let scale_x = 1.0 + (normalised_scale_x * 2.0);
     let scale_y = 1.0 + (normalised_scale_y * 2.0);
@@ -33,7 +33,7 @@ fn vertex(input: VertexInput) -> VertexOutput {
     );
 
     output.uv = input.uv;
-    output.pixel_size = input.pixel_size;
+    output.rect_size = input.rect_size;
 
     return output;
 }
@@ -49,14 +49,14 @@ fn fragment(
 ) -> @location(0) vec4<f32> {
     let uv = vertex_output.uv;
 
-    let pixel = vertex_output.pixel_size;
+    let pixel = vertex_output.rect_size;
 
-    let big = pixel.x + outline_thickness * 2;
-    let gongag = pixel.x + outline_thickness;
+    let full_outline = pixel.x + outline_thickness * 2;
+    let single_outline = pixel.x + outline_thickness;
 
-    if outline_thickness > 0.0 && uv.x < outline_thickness / big || uv.x > gongag / big || uv.y < outline_thickness / big || uv.y > gongag / big {
-         return vec4(1.0, 1.0, 1.0, 1.0);
+    if outline_thickness > 0.0 && uv.x < outline_thickness / full_outline || uv.x > single_outline / full_outline || uv.y < outline_thickness / full_outline || uv.y > single_outline / full_outline {
+         return outline_color;
     }
 
-    return vec4(f32(pixel_brightness), 0.0, 0.0, 1.0);
+    return rect_color;
 }

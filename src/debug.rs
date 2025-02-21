@@ -1,3 +1,5 @@
+use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
+use bevy::prelude::*;
 use bevy::{
     app::App,
     ecs::{
@@ -14,11 +16,25 @@ use bevy_inspector_egui::{
     bevy_inspector::{self, hierarchy::SelectedEntities},
     DefaultInspectorConfigPlugin,
 };
+use bevy_mod_index::storage::HashmapStorage;
 use bevy_window::PrimaryWindow;
 use egui::TextEdit;
 use egui_plot::{Line, Plot, PlotPoints, Points};
 
-use crate::{CombinedEasing, PixelStates, PACKED_SIZE, PIXEL_WAIT_TIME};
+use crate::pixels::components::Pixel;
+use crate::pixels::PIXEL_WAIT_TIME;
+use crate::scenes::story::{CombinedBellEasing, PixelStates};
+
+pub fn plugin(app: &mut App) {
+    app.register_type::<HashmapStorage<Pixel>>();
+
+    app.add_plugins((
+        LogDiagnosticsPlugin::default(),
+        FrameTimeDiagnosticsPlugin,
+        EguiPlugin,
+        DefaultInspectorConfigPlugin,
+    ));
+}
 
 fn inspector_ui(world: &mut World) {
     let Ok(egui_context) = world
@@ -49,7 +65,7 @@ fn inspector_ui(world: &mut World) {
             });
         });
 
-    let easing_res = world.resource::<CombinedEasing>();
+    let bell_curve_easing = world.resource::<CombinedBellEasing>();
     let game_state = world.resource::<PixelStates>();
 
     egui::SidePanel::right("extras_inspector")
@@ -59,7 +75,9 @@ fn inspector_ui(world: &mut World) {
 
             egui::ScrollArea::both().show(ui, |ui| {
                 {
-                    let current_easing_val = easing_res(game_state.next_lit_pixel.normalised());
+                    let x = game_state.next_lit_pixel.normalised();
+
+                    let current_easing_val = bell_curve_easing.evaluate((x, 0.2, 1.0));
 
                     {
                         ui.label("Pixel Easing Curve");
@@ -68,7 +86,7 @@ fn inspector_ui(world: &mut World) {
                             .map(|i| {
                                 let x = i as f64 / 100.0;
 
-                                [x, easing_res(x)]
+                                [x, bell_curve_easing.evaluate((x, 0.2, 1.0))]
                             })
                             .collect();
 
