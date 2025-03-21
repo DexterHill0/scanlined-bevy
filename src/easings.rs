@@ -1,24 +1,35 @@
 use std::{marker::PhantomData, ops::Deref};
 
-use bevy::{ecs::system::Resource, utils::all_tuples};
+use bevy::{
+    ecs::{system::Resource, world::FromWorld},
+    utils::all_tuples,
+};
 use egui::emath::Real;
 
 use crate::scenes::story::BellEasingRet;
 
 /// max that only requires `T: PartialOrd` instead of `T: Ord`
 fn loose_max<T: PartialOrd>(a: T, b: T) -> T {
-    return if a <= b { b } else { a };
+    if a <= b {
+        b
+    } else {
+        a
+    }
 }
 
 #[derive(Resource)]
-pub struct CombinedEasing<Args, Ret> {
+pub struct CombinedEasing<Args, Ret>
+where
+    Args: FromWorld,
+    Ret: FromWorld,
+{
     cb: Box<dyn (Fn(Args) -> Ret) + Send + Sync>,
 }
 
 impl<Args, Ret> CombinedEasing<Args, Ret>
 where
-    Args: Copy + 'static,
-    Ret: PartialOrd + Copy + 'static,
+    Args: FromWorld + Copy + 'static,
+    Ret: FromWorld + PartialOrd + Copy + 'static,
 {
     pub fn new<F>(easing_fn: F) -> Self
     where

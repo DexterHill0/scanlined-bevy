@@ -4,7 +4,7 @@ pub mod systems;
 use bevy::{
     app::{App, Update},
     ecs::{
-        schedule::{common_conditions::resource_exists, IntoSystemConfigs},
+        schedule::{common_conditions::resource_exists, Condition, IntoSystemConfigs},
         system::Single,
     },
     state::condition::in_state,
@@ -21,9 +21,9 @@ use crate::{
     utils::run_if::has_window,
 };
 
-pub const SCANLINE_X: i32 = 17;
+pub const SCANLINE_X: i32 = 21;
 pub const SCANLINE_Y: i32 = 11;
-pub const PACKED_SIZE: i32 = GridPosition::pack(SCANLINE_X, SCANLINE_X, SCANLINE_Y);
+pub const PACKED_SIZE: i32 = GridPosition::pack(SCANLINE_X, SCANLINE_X - 1, SCANLINE_Y - 1);
 pub const STARTING_USER_PIXEL: GridPosition =
     GridPosition::new(SCANLINE_X, SCANLINE_Y, SCANLINE_X / 2, SCANLINE_Y / 2);
 pub const USER_PIXEL_OUTLINE_THICKNESS: f32 = 2.0;
@@ -37,9 +37,10 @@ pub fn plugin(app: &mut App) {
         Update,
         (
             update_pixel_brightness,
-            update_pixel_lit_time.run_if(update_pixel_lit_time_run_if),
+            update_pixel_lit_time
+                .run_if(resource_exists::<PixelStates>.and(update_pixel_lit_time_run_if)),
             position_pixels.run_if(has_window),
         )
-            .run_if(in_state(SceneState::Game)),
+            .distributive_run_if(in_state(SceneState::Game)),
     );
 }

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::{math::IVec2, reflect::Reflect};
 use std::hash::Hash;
 
-#[derive(Reflect, Default, Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Reflect, Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct GridPosition {
     pub width: i32,
     pub height: i32,

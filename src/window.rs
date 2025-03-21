@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_window::{PresentMode, WindowTheme};
 
-const BACKGROUND_COLOR: Color = Color::srgb(0.4, 0.4, 0.4);
+const BACKGROUND_COLOR: Color = Color::srgb(0.0, 0.0, 0.0);
 
 pub(super) fn plugin(app: &mut App) {
     let primary_window = Window {

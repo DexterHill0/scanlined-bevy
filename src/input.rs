@@ -4,7 +4,8 @@ use bevy_mod_index::index::Index;
 use crate::{
     grid::position::GridPosition,
     pixels::{
-        components::{Pixel, UserPixelMarker},
+        components::{AllPixels, Pixel, UserPixelMarker},
+        systems::set_user_pixel,
         SCANLINE_X, SCANLINE_Y,
     },
     scenes::story::PixelStates,
@@ -14,14 +15,12 @@ use crate::{
 fn keyboard_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
-    mut index: Index<Pixel>,
+    index: Index<AllPixels>,
 ) {
     if keys.just_pressed(KeyCode::Space) {
         let new_pos = random_grid_position(SCANLINE_X, SCANLINE_Y);
 
-        if let Ok(entity) = index.lookup_single(&new_pos) {
-            commands.entity(entity).insert(UserPixelMarker);
-        }
+        set_user_pixel(&mut commands, index, new_pos);
     }
 }
 

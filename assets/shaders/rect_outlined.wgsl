@@ -14,7 +14,7 @@ struct VertexOutput {
 };
 
 @group(2) @binding(0) var<uniform> rect_color: vec4<f32>;
-@group(2) @binding(0) var<uniform> outline_color: vec4<f32>;
+@group(2) @binding(1) var<uniform> outline_color: vec4<f32>;
 @group(2) @binding(2) var<uniform> outline_thickness: f32;
 
 @vertex

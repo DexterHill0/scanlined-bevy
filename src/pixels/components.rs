@@ -12,7 +12,7 @@ use crate::grid::position::GridPosition;
 
 use super::{PIXEL_GAP, PIXEL_SIZE};
 
-#[derive(Component, Reflect, Default)]
+#[derive(Component, Reflect)]
 #[require(Transform, Mesh2d, PixelLifetime, PixelColor)]
 pub struct Pixel {
     pub pos: GridPosition,
@@ -36,13 +36,16 @@ impl Pixel {
     }
 }
 
-impl IndexInfo for Pixel {
+#[derive(Reflect)]
+pub struct AllPixels;
+
+impl IndexInfo for AllPixels {
     type Component = Pixel;
     type Value = GridPosition;
 
     type Storage = HashmapStorage<Self>;
 
-    const REFRESH_POLICY: IndexRefreshPolicy = IndexRefreshPolicy::WhenRun;
+    const REFRESH_POLICY: IndexRefreshPolicy = IndexRefreshPolicy::WhenUsed;
 
     fn value(c: &Self::Component) -> Self::Value {
         c.pos

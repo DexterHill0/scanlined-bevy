@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, utils::warn};
 use bevy_mod_index::index::Index;
 
 use crate::{
@@ -8,9 +8,17 @@ use crate::{
 };
 
 use super::{
-    components::{Pixel, PixelLifetime, UserPixelMarker},
+    components::{AllPixels, Pixel, PixelLifetime, UserPixelMarker},
     PIXEL_WAIT_TIME, SCANLINE_X, SCANLINE_Y, USER_PIXEL_OUTLINE_THICKNESS,
 };
+
+pub fn set_user_pixel(commands: &mut Commands, mut index: Index<AllPixels>, pos: GridPosition) {
+    if let Ok(entity) = index.lookup_single(&pos) {
+        commands.entity(entity).insert(UserPixelMarker);
+    } else {
+        warn!("unable to set pixel to user pixel: {}", pos.packed);
+    }
+}
 
 pub(super) fn update_pixel_brightness(
     time: Res<Time>,
@@ -21,8 +29,8 @@ pub(super) fn update_pixel_brightness(
             &PixelLifetime,
             &MeshMaterial2d<OutlinedRectMaterial>,
         ),
-        // dont update brightness of user pixels
-        Without<UserPixelMarker>,
+        // // dont update brightness of user pixels
+        // Without<UserPixelMarker>,
     >,
 ) {
     let millis_elapsed = time.elapsed().as_millis() as f64;
@@ -40,20 +48,35 @@ pub(super) fn update_pixel_brightness(
 pub(super) fn update_pixel_lit_time(
     time: Res<Time>,
     mut state: ResMut<PixelStates>,
-    mut query: Query<(&Pixel, &mut PixelLifetime), Without<UserPixelMarker>>,
+    mut query: Query<
+        (&Pixel, &mut PixelLifetime), // , Without<UserPixelMarker>
+    >,
     bell_easing: Res<CombinedBellEasing>,
-    mut index: Index<Pixel>,
+    mut index: Index<AllPixels>,
 ) {
     let millis_elapsed = time.elapsed().as_millis() as f64;
 
     // these should always exist
-    let pixel_entity = index
-        .lookup_single(&state.next_lit_pixel)
-        .expect("no entity for next_lit_pixel");
+    let pixel_entity = if let Ok(entity) = index.lookup_single(&state.next_lit_pixel) {
+        entity
+    } else {
+        warn!(
+            "failed to get next lit pixel for: {:?}",
+            state.next_lit_pixel.packed
+        );
+        state.update_next_pixel();
+        return;
+    };
 
-    let (_, mut lit_pixel_lifetime) = query
-        .get_mut(pixel_entity)
-        .expect("no component for next_lit_pixel entity");
+    let (_, mut lit_pixel_lifetime) = if let Ok(entity) = query.get_mut(pixel_entity) {
+        entity
+    } else {
+        warn!(
+            "failed to get next lit pixel lifetime for: {:?}",
+            state.next_lit_pixel.packed
+        );
+        return;
+    };
 
     **lit_pixel_lifetime = millis_elapsed;
 
